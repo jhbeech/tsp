@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { sampleSize } from 'lodash';
 
 type Coordinate = [number, number];
 
@@ -107,46 +108,86 @@ function getTotalDistance(coordinates: Coordinate[]) {
 }
 
 
-function applyLocalSearchTwoOpti(coordinates: Coordinate[], thresh: number, maxIt: number) {
+function applyLocalSearchTwoOpti(coordinates: Coordinate[], thresh: number, maxIt: number, startTime: number) {
     let searchCoords = [...coordinates]
     let improvementFound = true;
     let count = 0
+    const logEvery = 100000;
+    const maxRunHours = 5;
     while (improvementFound && count < maxIt) {
         improvementFound = false;
-        for (let currentNode = 0; currentNode < coordinates.length - 1; currentNode++) {
+        for (let nodeIdx = 0; nodeIdx < coordinates.length - 1; nodeIdx++) {
             let bestImprovementNode = -1;
             let currentNodeImprovement = 0;
             // should this go all the way up to currentNode + coordinates.length?
             // currently fromNode = last node is not being solved
             // 
-            for (let swapNode = currentNode + 1; swapNode < coordinates.length; swapNode++) {
-                let currentDelta = getlengthDelta(searchCoords, currentNode, swapNode)
-                if (currentDelta < - thresh) {
+            for (let neighbourIdx = nodeIdx + 1; neighbourIdx < coordinates.length; neighbourIdx++) {
+                let swapDelta = getlengthDelta(searchCoords, nodeIdx, neighbourIdx)
+                if (swapDelta < - thresh) {
                     improvementFound = true;
-                    if (currentDelta < currentNodeImprovement) {
-                        currentNodeImprovement = currentDelta;
-                        bestImprovementNode = swapNode;
+                    if (swapDelta < currentNodeImprovement) {
+                        currentNodeImprovement = swapDelta;
+                        bestImprovementNode = neighbourIdx;
                     }
                 }
                 count += 1;
+                // if (count % logEvery == 0) {
+                //     console.log(count, getTotalDistance(searchCoords));
+                // }
             }
             if (currentNodeImprovement < -thresh) {
-                searchCoords = applyTwoOptSwap(searchCoords, currentNode, bestImprovementNode);
+                searchCoords = applyTwoOptSwap(searchCoords, nodeIdx, bestImprovementNode);
+            }
+            if (performance.now() - startTime > maxRunHours * 60 * 60 * 1000) {
+                break;
             }
         }
     }
-
-
-
     return searchCoords
 }
+
+
+function applySimmulatedAnnealingSearch(coordinates: Coordinate[], iterations: number, initialTemp: number) {
+    let seq = [];
+    let searchCoords = [...coordinates];
+    let count = 0;
+    let temp = initialTemp;
+    let logEvery = 100000;
+    while (count < iterations) {
+        let nodes = sampleSize(Array.from(searchCoords.keys()), 2);
+        let nodeIdx = Math.min(...nodes);
+        let neighbourIdx = Math.max(...nodes);
+        let swapDelta = getlengthDelta(searchCoords, nodeIdx, neighbourIdx)
+        let rand  = Math.random();
+        if (swapDelta < 0 || Math.exp(-swapDelta / temp) > rand) {
+            searchCoords = applyTwoOptSwap(searchCoords, nodeIdx, neighbourIdx);
+            seq.push(getTotalDistance(searchCoords));
+        }
+        temp *= (1 - (count + 1) / iterations) ** 0.25
+        count += 1;
+
+        if (count % logEvery == 0) {
+            console.log(getTotalDistance(searchCoords));
+        }
+
+    }
+    return searchCoords
+}
+
 // tsp_4461_1
-const filePath = join(__dirname, 'data/tsp_33810_1');
+//33810
+const filePath = join(__dirname, 'data/tsp_1889_1');
 const inputCoordinates = parseFileToCoordinates(filePath);
 
+
+const startTime = performance.now();
+
 const greedySol = getGreedySolution(inputCoordinates);
+console.log("greedy", getTotalDistance(greedySol));
 
-
+const greedyJsonString = JSON.stringify(greedySol, null, 2);
+writeFileSync('greedy.json', greedyJsonString, 'utf8');
 // const v1 = 30;
 // const v2 = 198;
 // const delta = getlengthDelta(greedySol, v1, v2);
@@ -159,16 +200,22 @@ const greedySol = getGreedySolution(inputCoordinates);
 
 // console.log(greedySol.length);
 
-let twoOptSol = applyLocalSearchTwoOpti(greedySol, 1e-10, 1e12);
+// assume greedy sol solves within time
+const iterations = 10;
+let sol = [...greedySol];
+for (let i = 0; i < iterations; i++) {
+    sol = applySimmulatedAnnealingSearch(sol, 1000000, 500)
+    console.log("sim anneal", getTotalDistance(sol));
+    const simmAnnealJsonString = JSON.stringify(sol, null)
+    writeFileSync('simmAnneal.json', simmAnnealJsonString, 'utf8')
+    sol = applyLocalSearchTwoOpti(sol, 1e-10, 1e12, startTime);
+    console.log("2 opt", getTotalDistance(sol));
+    const twoOptJsonString = JSON.stringify(sol, null, 2);
+    writeFileSync('twoOpt.json', twoOptJsonString, 'utf8')
+}
 
-console.log(getTotalDistance(greedySol));
-console.log(getTotalDistance(twoOptSol));
 
-const greedyJsonString = JSON.stringify(greedySol, null, 2);
-writeFileSync('greedy.json', greedyJsonString, 'utf8');
 
-const twoOptJsonString = JSON.stringify(twoOptSol, null, 2);
-writeFileSync('twoOpt.json', twoOptJsonString, 'utf8')
 
-// console.log(twoOptSol.length);
-// console.log(twoOptSol);
+
+
